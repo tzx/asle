@@ -1,0 +1,12 @@
+[package]
+name = "asle"
+version = "0.1.0"
+authors = ["Timmy Xiao <timmyxiao1@gmail.com>"]
+edition = "2018"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+kiss3d = "0.28.0"
+glfw = "0.41.0"
+rand = "0.7.3"
