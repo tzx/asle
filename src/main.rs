@@ -8,6 +8,7 @@ use na::Vector3;
 
 const DT: f32 = 0.005;
 const GRAVITY: f32 = -0.1;
+const grid_spacing: f32 = 0.2;
 
 struct AppState {
     particles: Vec<Particle>,
@@ -33,8 +34,60 @@ impl State for AppState {
 impl AppState {
     fn interpolate_to_grid(&mut self) {
         for point in &self.particles {
-            panic!("Not implemented!");
+            let position = point.position;
+            // Interpolate to the bottom most
+            let i_low = std::cmp::max((position.x * grid_spacing).floor() as usize - 2, 0);
+            let j_low = std::cmp::max((position.y * grid_spacing).floor() as usize - 2, 0);
+            let k_low = std::cmp::max((position.z * grid_spacing).floor() as usize - 2, 0);
+            let i_high = std::cmp::min(
+                (position.x * grid_spacing).floor() as usize + 2,
+                self.grid_nodes.len(),
+            );
+            let j_high = std::cmp::min(
+                (position.y * grid_spacing).floor() as usize + 2,
+                self.grid_nodes.len(),
+            );
+            let k_high = std::cmp::min(
+                (position.z * grid_spacing).floor() as usize + 2,
+                self.grid_nodes.len(),
+            );
+
+            // Scatter to the grid nodes
+            for i in i_low..i_high {
+                for j in j_low..j_high {
+                    for k in k_low..k_high {
+                        let weight = b_spline(Vector3::new(i as f32, j as f32, k as f32), position);
+                        self.grid_nodes[i][j][k].mass += weight * point.mass;
+                        self.grid_nodes[i][j][k].velocity += weight * point.mass * point.velocity;
+                    }
+                }
+            }
         }
+
+        // Normalized grid velocity
+        for r in &mut self.grid_nodes {
+            for c in r {
+                for grid_node in c {
+                    grid_node.velocity /= grid_node.mass;
+                }
+            }
+        }
+    }
+}
+
+fn b_spline(grid_index: Vector3<f32>, evaluation_position: Vector3<f32>) -> f32 {
+    let scaled = (evaluation_position - grid_index * grid_spacing) / grid_spacing;
+    n_fn(scaled.x) * n_fn(scaled.y) * n_fn(scaled.z)
+}
+
+fn n_fn(x: f32) -> f32 {
+    let x = x.abs();
+    if x < 1.0 {
+        return 0.5 * x.powi(3) - x.powi(2) + 2.0 / 3.0;
+    } else if x < 2.0 {
+        return -1.0 / 6.0 * x.powi(3) + x.powi(2) - 2.0 * x + 4.0 / 3.0;
+    } else {
+        return 0.0;
     }
 }
 
@@ -42,7 +95,7 @@ fn main() {
     let mut window = Window::new("Balls");
 
     // TODO: Grid should be constant
-    let grid_nodes = setup_grid(15, 15, 15);
+    let grid_nodes = setup_grid(100, 100, 100);
     let mut particles = setup_particles(15.0, 15.0, 15.0, 10);
 
     for p in &mut particles {
@@ -85,7 +138,8 @@ fn setup_grid(x: i32, y: i32, z: i32) -> Vec<Vec<Vec<GridNode>>> {
             let mut zs = Vec::new();
             for _ in 0..z {
                 zs.push(GridNode {
-                    mass: 0.0,
+                    // TODO: Mass should be a constant
+                    mass: 5.0,
                     velocity: Vector3::from_element(0.0),
                 })
             }
