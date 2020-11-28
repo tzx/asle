@@ -8,7 +8,7 @@ use na::Translation3;
 use na::Vector3;
 
 const DT: f32 = 0.005;
-const GRAVITY: f32 = -0.1;
+const GRAVITY: f32 = -5.0;
 const grid_spacing: f32 = 0.2;
 
 // Parameters
@@ -32,10 +32,27 @@ struct AppState {
 
 impl State for AppState {
     fn step(&mut self, _: &mut Window) {
+        // for point in self.particles.iter_mut() {
+        //     // We will use Forward Euler Method
+        //     point.position += DT * point.velocity;
+        //     point.velocity += DT * Vector3::new(0.0, GRAVITY, 0.0);
+        //     let translation = Translation3::from(point.position);
+        //     if let Some(scene_node) = point.scene_node.as_mut() {
+        //         scene_node.set_local_translation(translation);
+        //     } else {
+        //         panic!("Scene node has not been set for particle");
+        //     }
+        // }
+        self.reset_grid();
+        self.interpolate_to_grid();
+        self.compute_particle_volumes();
+        self.compute_force_hat_elastic();
+        self.compute_grid_forces();
+        self.compute_grid_velocities();
+        self.update_deformation_gradient();
+        self.update_particle_velocities();
+        self.update_particle_positions();
         for point in self.particles.iter_mut() {
-            // We will use Forward Euler Method
-            point.position += DT * point.velocity;
-            point.velocity += DT * Vector3::new(0.0, GRAVITY, 0.0);
             let translation = Translation3::from(point.position);
             if let Some(scene_node) = point.scene_node.as_mut() {
                 scene_node.set_local_translation(translation);
@@ -52,17 +69,24 @@ fn get_bounds(
     y_max: usize,
     z_max: usize,
 ) -> (usize, usize, usize, usize, usize, usize) {
-    let i_low = std::cmp::max((position.x * grid_spacing).floor() as usize - 2, 0);
-    let j_low = std::cmp::max((position.y * grid_spacing).floor() as usize - 2, 0);
-    let k_low = std::cmp::max((position.z * grid_spacing).floor() as usize - 2, 0);
-    let i_high = std::cmp::min((position.x * grid_spacing).floor() as usize + 2, x_max);
-    let j_high = std::cmp::min((position.y * grid_spacing).floor() as usize + 2, y_max);
-    let k_high = std::cmp::min((position.z * grid_spacing).floor() as usize + 2, z_max);
+    let i_low = std::cmp::max((position.x / grid_spacing).floor() as i32 - 2, 0) as usize;
+    let j_low = std::cmp::max((position.y / grid_spacing).floor() as i32 - 2, 0) as usize;
+    let k_low = std::cmp::max((position.z / grid_spacing).floor() as i32 - 2, 0) as usize;
+    let i_high =
+        std::cmp::min((position.x / grid_spacing).floor() as i32 + 2, x_max as i32) as usize;
+    let j_high =
+        std::cmp::min((position.y / grid_spacing).floor() as i32 + 2, y_max as i32) as usize;
+    let k_high =
+        std::cmp::min((position.z / grid_spacing).floor() as i32 + 2, z_max as i32) as usize;
 
     (i_low, i_high, j_low, j_high, k_low, k_high)
 }
 
 impl AppState {
+    fn reset_grid(&mut self) {
+        self.grid_nodes = setup_grid(100, 100, 100);
+    }
+
     fn interpolate_to_grid(&mut self) {
         for point in &self.particles {
             let (i_low, i_high, j_low, j_high, k_low, k_high) = get_bounds(
@@ -102,6 +126,7 @@ impl AppState {
                 self.grid_nodes[0].len(),
                 self.grid_nodes[0][0].len(),
             );
+
             let mut density = 0.0;
             for i in i_low..i_high {
                 for j in j_low..j_high {
@@ -114,6 +139,9 @@ impl AppState {
             }
             let h3 = grid_spacing.powi(3);
             density /= h3;
+            if density == 0.0 {
+                panic!("Density is 0!");
+            }
             point.volume = point.mass / density;
         }
     }
@@ -191,6 +219,7 @@ impl AppState {
                     }
                     grid_node.next_velocity =
                         grid_node.velocity + DT * grid_node.force / grid_node.mass;
+
                     // TODO: TODO: DO COLLISIONS
                 }
             }
@@ -268,6 +297,14 @@ impl AppState {
                 }
             }
             particle.velocity = (1.0 - ALPHA) * velocity_pic + ALPHA * velocity_flip;
+            // Update due to acceleration from gravity
+            particle.velocity += Vector3::new(0.0, GRAVITY, 0.0) * DT;
+        }
+    }
+
+    fn update_particle_positions(&mut self) {
+        for particle in &mut self.particles {
+            particle.position += particle.velocity * DT;
         }
     }
 }
@@ -399,7 +436,7 @@ fn setup_particles(x: f32, y: f32, z: f32, num_particles_1d: i32) -> Vec<Particl
                 velocity: Vector3::new(0.0, 0.0, 0.0),
                 mass: 5.0,
                 scene_node: None,
-                volume: 0.0,
+                volume: 1.0,
                 deformation_gradient_elastic: Matrix3::<f32>::identity(), // TODO: these really should be optional
                 deformation_gradient_plastic: Matrix3::<f32>::identity(),
                 f_hat_ep: Matrix3::<f32>::identity(),
