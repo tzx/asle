@@ -181,6 +181,67 @@ impl AppState {
             }
         }
     }
+
+    fn compute_grid_velocities(&mut self) {
+        for r in &mut self.grid_nodes {
+            for c in r {
+                for grid_node in c {
+                    if grid_node.mass <= 0.0 {
+                        panic!("mass should not be 0!")
+                    }
+                    grid_node.next_velocity =
+                        grid_node.velocity + DT * grid_node.force / grid_node.mass;
+                    // TODO: TODO: DO COLLISIONS
+                }
+            }
+        }
+    }
+
+    fn update_deformation_gradient(&mut self) {
+        for point in &mut self.particles {
+            let (i_low, i_high, j_low, j_high, k_low, k_high) = get_bounds(
+                point.position,
+                self.grid_nodes.len(),
+                self.grid_nodes[0].len(),
+                self.grid_nodes[0][0].len(),
+            );
+
+            let mut velocity_gradient = Matrix3::<f32>::zeros();
+            for i in i_low..i_high {
+                for j in j_low..j_high {
+                    for k in k_low..k_high {
+                        let weight_gradient = b_spline_gradient(
+                            Vector3::new(i as f32, j as f32, k as f32),
+                            point.position,
+                        );
+                        let velocity = self.grid_nodes[i][j][k].next_velocity;
+                        velocity_gradient += velocity * weight_gradient.transpose();
+                    }
+                }
+            }
+
+            let f_hat_elastic_next = (Matrix3::<f32>::identity() + DT * velocity_gradient)
+                * point.deformation_gradient_elastic;
+            let f_next = f_hat_elastic_next * point.deformation_gradient_plastic;
+
+            let svd = f_hat_elastic_next.svd(true, true);
+            let u = svd.u.unwrap();
+            let v_t = svd.v_t.unwrap();
+            let s_hat_vec: Vector3<f32> = svd.singular_values;
+
+            let s_vec = Vector3::new(
+                na::clamp(s_hat_vec.x, 1.0 - THETA_C, 1.0 + THETA_S),
+                na::clamp(s_hat_vec.y, 1.0 - THETA_C, 1.0 + THETA_S),
+                na::clamp(s_hat_vec.z, 1.0 - THETA_C, 1.0 + THETA_S),
+            );
+            let s_vec_inv = Vector3::new(s_vec.x.recip(), s_vec.y.recip(), s_vec.z.recip());
+            let s = Matrix3::from_diagonal(&s_vec);
+            let s_inv = Matrix3::from_diagonal(&s_vec_inv);
+
+            point.deformation_gradient_elastic = u * s * v_t;
+            point.deformation_gradient_plastic = v_t.transpose() * s_inv * u.transpose() * f_next;
+        }
+    }
 }
 
 fn b_spline(grid_index: Vector3<f32>, evaluation_position: Vector3<f32>) -> f32 {
@@ -253,6 +314,7 @@ fn main() {
 struct GridNode {
     mass: f32,
     velocity: Vector3<f32>,
+    next_velocity: Vector3<f32>,
     force: Vector3<f32>,
 }
 
@@ -278,6 +340,7 @@ fn setup_grid(x: i32, y: i32, z: i32) -> Vec<Vec<Vec<GridNode>>> {
                     // TODO: Mass should be a constant
                     mass: 5.0,
                     velocity: Vector3::from_element(0.0),
+                    next_velocity: Vector3::from_element(0.0),
                     force: Vector3::from_element(0.0),
                 })
             }
