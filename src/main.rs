@@ -242,6 +242,34 @@ impl AppState {
             point.deformation_gradient_plastic = v_t.transpose() * s_inv * u.transpose() * f_next;
         }
     }
+
+    fn update_particle_velocities(&mut self) {
+        for particle in &mut self.particles {
+            let mut velocity_pic = Vector3::<f32>::zeros();
+            let mut velocity_flip = particle.velocity;
+            let (i_low, i_high, j_low, j_high, k_low, k_high) = get_bounds(
+                particle.position,
+                self.grid_nodes.len(),
+                self.grid_nodes[0].len(),
+                self.grid_nodes[0][0].len(),
+            );
+
+            for i in i_low..i_high {
+                for j in j_low..j_high {
+                    for k in k_low..k_high {
+                        let weight = b_spline(
+                            Vector3::new(i as f32, j as f32, k as f32),
+                            particle.position,
+                        );
+                        let node = &self.grid_nodes[i][j][k];
+                        velocity_pic += node.next_velocity * weight;
+                        velocity_flip += (node.next_velocity - node.velocity) * weight;
+                    }
+                }
+            }
+            particle.velocity = (1.0 - ALPHA) * velocity_pic + ALPHA * velocity_flip;
+        }
+    }
 }
 
 fn b_spline(grid_index: Vector3<f32>, evaluation_position: Vector3<f32>) -> f32 {
