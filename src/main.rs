@@ -10,10 +10,10 @@ use na::Vector3;
 use rand::prelude::*;
 
 const DT: f32 = 0.005;
-const GRAVITY: f32 = -80.0;
+const GRAVITY: f32 = -100.0;
 const grid_spacing: f32 = 0.1;
 const GRID_DIM: i32 = 100;
-const NUM_PARTICLES: u32 = 15;
+const NUM_PARTICLES: u32 = 100;
 
 // Parameters
 const E_0: f32 = 1.4e5;
@@ -513,7 +513,7 @@ fn setup_particles(x: f32, y: f32, z: f32, num_particles_1d: u32) -> Vec<Particl
         let position = Vector3::new(offset_x, offset_y, 0.0) + center;
         let particle = Particle {
             position,
-            velocity: Vector3::new(-15.0, 0.0, 0.0),
+            velocity: Vector3::new(-0.0, 0.0, 0.0),
             mass: 1.0,
             scene_node: None,
             volume: 1.0,
