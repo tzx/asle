@@ -13,7 +13,7 @@ const DT: f32 = 0.005;
 const GRAVITY: f32 = -80.0;
 const grid_spacing: f32 = 0.1;
 const GRID_DIM: i32 = 100;
-const NUM_PARTICLES: u32 = 100;
+const NUM_PARTICLES: u32 = 15;
 
 // Parameters
 const E_0: f32 = 1.4e5;
@@ -21,6 +21,8 @@ const NU: f32 = 0.2;
 const XI: f32 = 10.0;
 const THETA_C: f32 = 2.5e-2;
 const THETA_S: f32 = 7.5e-3;
+// const THETA_C: f32 = 2.5e-1;
+// const THETA_S: f32 = 7.5e-2;
 
 // From Wikipedia: Lame parameters
 const MU_0: f32 = E_0 / (2.0 * (1.0 + NU));
@@ -322,7 +324,9 @@ impl AppState {
             particle.velocity += Vector3::new(0.0, GRAVITY, 0.0) * DT;
 
             for co in &self.collision_objects {
+                //println!("Before: {:?}", particle.velocity);
                 particle.velocity = co.collide(particle.position, particle.velocity);
+                // println!("After: {:?}", particle.velocity);
             }
         }
     }
@@ -380,7 +384,7 @@ fn main() {
 
     // TODO: Grid should be constant
     let grid_nodes = setup_grid(GRID_DIM, GRID_DIM, GRID_DIM);
-    let mut particles = setup_particles(3.0, 3.0, 3.0, NUM_PARTICLES);
+    let mut particles = setup_particles(2.0, 2.0, 3.0, NUM_PARTICLES);
 
     for p in &mut particles {
         // TODO: sphere_size should be constant
@@ -400,7 +404,13 @@ fn main() {
         position: Vector3::new(1.5, 0.0, 0.0),
         normal: Vector3::new(1.0, 0.0, 0.0),
     };
+
+    let floor = CollisionObject {
+        position: Vector3::new(0.0, 0.0, 0.0),
+        normal: Vector3::new(0.0, 1.0, 0.0),
+    };
     collision_objects.push(collision_object);
+    collision_objects.push(floor);
 
     window.set_light(Light::StickToCamera);
 
@@ -446,7 +456,24 @@ impl CollisionObject {
         let offset = (node_position - self.position).dot(&self.normal);
         let offset_next = (origin_to_next_pos).dot(&self.normal);
         if offset.abs() < 0.001 || offset * offset_next < 0.0 {
-            return Vector3::<f32>::zeros();
+            let outward_normal = if (node_position - self.position).dot(&self.normal) > 0.0 {
+                self.normal
+            } else {
+                -self.normal
+            };
+
+            if self.position.x == 1.5 {
+                return Vector3::<f32>::zeros();
+            }
+
+            let v_n = node_velocity.dot(&outward_normal);
+            let v_tangent = node_velocity - outward_normal * v_n;
+            let v_tangent_length = v_tangent.norm();
+            if v_tangent_length <= -1.0 * v_n {
+                return Vector3::<f32>::zeros();
+            } else {
+                return (1.0 + -1.0 * v_n / v_tangent_length) * v_tangent;
+            }
         }
 
         node_velocity
@@ -481,12 +508,12 @@ fn setup_particles(x: f32, y: f32, z: f32, num_particles_1d: u32) -> Vec<Particl
     let mut particles = Vec::new();
     let center = Vector3::new(x, y, z);
     for _ in 0..num_particles_1d * num_particles_1d {
-        let offset_x: f32 = rng.gen_range(-0.25, 0.25);
-        let offset_y: f32 = rng.gen_range(-0.25, 0.25);
+        let offset_x: f32 = rng.gen_range(-0.1, 0.1);
+        let offset_y: f32 = rng.gen_range(-0.1, 0.1);
         let position = Vector3::new(offset_x, offset_y, 0.0) + center;
         let particle = Particle {
             position,
-            velocity: Vector3::new(-10.0, 0.0, 0.0),
+            velocity: Vector3::new(-15.0, 0.0, 0.0),
             mass: 1.0,
             scene_node: None,
             volume: 1.0,
