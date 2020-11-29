@@ -1,15 +1,19 @@
 use kiss3d::nalgebra as na;
 
+use kiss3d::event::{Action, Key};
 use kiss3d::light::Light;
 use kiss3d::scene::SceneNode;
 use kiss3d::window::{State, Window};
 use na::Matrix3;
 use na::Translation3;
 use na::Vector3;
+use rand::prelude::*;
 
 const DT: f32 = 0.005;
-const GRAVITY: f32 = -5.0;
-const grid_spacing: f32 = 0.2;
+const GRAVITY: f32 = -80.0;
+const grid_spacing: f32 = 0.1;
+const GRID_DIM: i32 = 100;
+const NUM_PARTICLES: u32 = 100;
 
 // Parameters
 const E_0: f32 = 1.4e5;
@@ -28,10 +32,32 @@ const ALPHA: f32 = 0.95;
 struct AppState {
     particles: Vec<Particle>,
     grid_nodes: Vec<Vec<Vec<GridNode>>>,
+    volumes_calculated: bool,
 }
 
 impl State for AppState {
-    fn step(&mut self, _: &mut Window) {
+    fn step(&mut self, window: &mut Window) {
+        if window.get_key(Key::A) == Action::Press {
+            self.reset_grid();
+            self.interpolate_to_grid();
+            if !self.volumes_calculated {
+                self.compute_particle_volumes();
+            }
+            self.compute_force_hat_elastic();
+            self.compute_grid_forces();
+            self.compute_grid_velocities();
+            self.update_deformation_gradient();
+            self.update_particle_velocities();
+            self.update_particle_positions();
+            for point in self.particles.iter_mut() {
+                let translation = Translation3::from(point.position);
+                if let Some(scene_node) = point.scene_node.as_mut() {
+                    scene_node.set_local_translation(translation);
+                } else {
+                    panic!("Scene node has not been set for particle");
+                }
+            }
+        }
         // for point in self.particles.iter_mut() {
         //     // We will use Forward Euler Method
         //     point.position += DT * point.velocity;
@@ -43,23 +69,6 @@ impl State for AppState {
         //         panic!("Scene node has not been set for particle");
         //     }
         // }
-        self.reset_grid();
-        self.interpolate_to_grid();
-        self.compute_particle_volumes();
-        self.compute_force_hat_elastic();
-        self.compute_grid_forces();
-        self.compute_grid_velocities();
-        self.update_deformation_gradient();
-        self.update_particle_velocities();
-        self.update_particle_positions();
-        for point in self.particles.iter_mut() {
-            let translation = Translation3::from(point.position);
-            if let Some(scene_node) = point.scene_node.as_mut() {
-                scene_node.set_local_translation(translation);
-            } else {
-                panic!("Scene node has not been set for particle");
-            }
-        }
     }
 }
 
@@ -84,7 +93,7 @@ fn get_bounds(
 
 impl AppState {
     fn reset_grid(&mut self) {
-        self.grid_nodes = setup_grid(100, 100, 100);
+        self.grid_nodes = setup_grid(GRID_DIM, GRID_DIM, GRID_DIM);
     }
 
     fn interpolate_to_grid(&mut self) {
@@ -95,6 +104,11 @@ impl AppState {
                 self.grid_nodes[0].len(),
                 self.grid_nodes[0][0].len(),
             );
+
+            // println!(
+            //     "Bounds: {:?}",
+            //     (i_low, i_high, j_low, j_high, k_low, k_high)
+            // );
 
             // Scatter to the grid nodes
             for i in i_low..i_high {
@@ -112,6 +126,7 @@ impl AppState {
         for r in &mut self.grid_nodes {
             for c in r {
                 for grid_node in c {
+                    // println!("GV: {:?}", grid_node.velocity);
                     grid_node.velocity /= grid_node.mass;
                 }
             }
@@ -144,6 +159,7 @@ impl AppState {
             }
             point.volume = point.mass / density;
         }
+        self.volumes_calculated = true;
     }
 
     fn compute_force_hat_elastic(&mut self) {
@@ -211,16 +227,29 @@ impl AppState {
     }
 
     fn compute_grid_velocities(&mut self) {
-        for r in &mut self.grid_nodes {
-            for c in r {
-                for grid_node in c {
+        for i in 0..self.grid_nodes.len() {
+            for j in 0..self.grid_nodes[i].len() {
+                for k in 0..self.grid_nodes[i][j].len() {
+                    let grid_node = &mut self.grid_nodes[i][j][k];
                     if grid_node.mass <= 0.0 {
                         panic!("mass should not be 0!")
                     }
                     grid_node.next_velocity =
                         grid_node.velocity + DT * grid_node.force / grid_node.mass;
 
-                    // TODO: TODO: DO COLLISIONS
+                    // TODO: TODO: collisions: generalize positions
+                    if grid_node.next_velocity.dot(&Vector3::new(1.0, 0.0, 0.0)) <= 0.0 {
+                        let position = grid_spacing * Vector3::new(i as f32, j as f32, k as f32);
+
+                        if position.x < 0.5 {
+                            // println!("P: {:?}", position);
+                            let new_x = position.x.max(0.0);
+                            grid_node.next_velocity.x = new_x;
+                            grid_node.next_velocity.y = 0.0;
+                            // let new_y = grid_node.next_velocity.y.max(0.0);
+                            // grid_node.next_velocity = Vector3::new(0.0, new_y, 0.0);
+                        }
+                    }
                 }
             }
         }
@@ -299,12 +328,28 @@ impl AppState {
             particle.velocity = (1.0 - ALPHA) * velocity_pic + ALPHA * velocity_flip;
             // Update due to acceleration from gravity
             particle.velocity += Vector3::new(0.0, GRAVITY, 0.0) * DT;
+
+            if particle.velocity.dot(&Vector3::new(1.0, 0.0, 0.0)) <= 0.0 {
+                let position = particle.position;
+
+                if position.x < 0.5 {
+                    // println!("P: {:?}", position);
+                    // particle.velocity = Vector3::<f32>::zeros();
+                    let new_x = position.x.max(0.0);
+                    particle.velocity.x = new_x;
+                    particle.velocity.y = 0.0;
+                }
+            }
         }
     }
 
     fn update_particle_positions(&mut self) {
         for particle in &mut self.particles {
-            particle.position += particle.velocity * DT;
+            if particle.position.x > 0.5 || particle.velocity.x > 3.0 {
+                println!("V: {:?}", particle.velocity);
+                particle.position += particle.velocity * DT;
+            }
+            println!("P: {:?}", particle.position);
         }
     }
 }
@@ -354,8 +399,8 @@ fn main() {
     let mut window = Window::new("Balls");
 
     // TODO: Grid should be constant
-    let grid_nodes = setup_grid(100, 100, 100);
-    let mut particles = setup_particles(15.0, 15.0, 15.0, 10);
+    let grid_nodes = setup_grid(GRID_DIM, GRID_DIM, GRID_DIM);
+    let mut particles = setup_particles(3.0, 3.0, 3.0, NUM_PARTICLES);
 
     for p in &mut particles {
         // TODO: sphere_size should be constant
@@ -364,13 +409,16 @@ fn main() {
     }
 
     let mut c = window.add_cube(15.0, 0.03, 15.0);
+    let mut c = window.add_cube(0.01, 15.0, 15.0);
     c.set_color(0.0, 0.0, 1.0);
-    c.prepend_to_local_translation(&Translation3::new(7.5, 0.0, 7.5));
+    // c.prepend_to_local_translation(&Translation3::new(7.5, 0.0, 7.5));
+    c.prepend_to_local_translation(&Translation3::new(0.5, 0.0, 0.0));
     window.set_light(Light::StickToCamera);
 
     let state = AppState {
         grid_nodes,
         particles,
+        volumes_calculated: false,
     };
     window.render_loop(state);
 }
@@ -403,7 +451,7 @@ fn setup_grid(x: i32, y: i32, z: i32) -> Vec<Vec<Vec<GridNode>>> {
             for _ in 0..z {
                 zs.push(GridNode {
                     // TODO: Mass should be a constant
-                    mass: 5.0,
+                    mass: 1.0,
                     velocity: Vector3::from_element(0.0),
                     next_velocity: Vector3::from_element(0.0),
                     force: Vector3::from_element(0.0),
@@ -417,33 +465,51 @@ fn setup_grid(x: i32, y: i32, z: i32) -> Vec<Vec<Vec<GridNode>>> {
     res
 }
 
-fn setup_particles(x: f32, y: f32, z: f32, num_particles_1d: i32) -> Vec<Particle> {
-    let size = 0.1;
-    let x_offset = x / 2.0 - (num_particles_1d / 2) as f32 * size;
-    let y_offset = y / 2.0 - (num_particles_1d / 2) as f32 * size;
-    let z_offset = z / 2.0 - (num_particles_1d / 2) as f32 * size;
+fn setup_particles(x: f32, y: f32, z: f32, num_particles_1d: u32) -> Vec<Particle> {
+    let mut rng = rand::thread_rng();
     let mut particles = Vec::new();
-    // Only 2D for now
-    for i in 0..num_particles_1d {
-        for j in 0..num_particles_1d {
-            // TODO: mass, size should be a constant
-            let particle = Particle {
-                position: Vector3::new(
-                    x_offset + size * i as f32,
-                    y_offset + size * j as f32,
-                    z_offset,
-                ),
-                velocity: Vector3::new(0.0, 0.0, 0.0),
-                mass: 5.0,
-                scene_node: None,
-                volume: 1.0,
-                deformation_gradient_elastic: Matrix3::<f32>::identity(), // TODO: these really should be optional
-                deformation_gradient_plastic: Matrix3::<f32>::identity(),
-                f_hat_ep: Matrix3::<f32>::identity(),
-            };
-            particles.push(particle);
-        }
+    let center = Vector3::new(x, y, z);
+    for _ in 0..num_particles_1d * num_particles_1d {
+        let offset_x: f32 = rng.gen_range(-0.25, 0.25);
+        let offset_y: f32 = rng.gen_range(-0.25, 0.25);
+        let position = Vector3::new(offset_x, offset_y, 0.0) + center;
+        let particle = Particle {
+            position,
+            velocity: Vector3::new(-20.0, 0.0, 0.0),
+            mass: 1.0,
+            scene_node: None,
+            volume: 1.0,
+            deformation_gradient_elastic: Matrix3::<f32>::identity(), // TODO: these really should be optional
+            deformation_gradient_plastic: Matrix3::<f32>::identity(),
+            f_hat_ep: Matrix3::<f32>::identity(),
+        };
+        particles.push(particle);
     }
+    // let size = 0.05;
+    // let x_offset = x / 2.0 - (num_particles_1d / 2) as f32 * size;
+    // let y_offset = y / 2.0 - (num_particles_1d / 2) as f32 * size;
+    // let mut particles = Vec::new();
+    // // Only 2D for now
+    // for i in 0..num_particles_1d {
+    //     for j in 0..num_particles_1d {
+    //         // TODO: mass, size should be a constant
+    //         let particle = Particle {
+    //             position: Vector3::new(
+    //                 x_offset + 1.0 * size * i as f32,
+    //                 y_offset + 1.0 * size * j as f32,
+    //                 2.0,
+    //             ),
+    //             velocity: Vector3::new(-3.0, 0.0, 0.0),
+    //             mass: 5.0,
+    //             scene_node: None,
+    //             volume: 1.0,
+    //             deformation_gradient_elastic: Matrix3::<f32>::identity(), // TODO: these really should be optional
+    //             deformation_gradient_plastic: Matrix3::<f32>::identity(),
+    //             f_hat_ep: Matrix3::<f32>::identity(),
+    //         };
+    //         particles.push(particle);
+    //     }
+    // }
 
     particles
 }
