@@ -33,6 +33,7 @@ struct AppState {
     particles: Vec<Particle>,
     grid_nodes: Vec<Vec<Vec<GridNode>>>,
     volumes_calculated: bool,
+    collision_objects: Vec<CollisionObject>,
 }
 
 impl State for AppState {
@@ -237,18 +238,9 @@ impl AppState {
                     grid_node.next_velocity =
                         grid_node.velocity + DT * grid_node.force / grid_node.mass;
 
-                    // TODO: TODO: collisions: generalize positions
-                    if grid_node.next_velocity.dot(&Vector3::new(1.0, 0.0, 0.0)) <= 0.0 {
-                        let position = grid_spacing * Vector3::new(i as f32, j as f32, k as f32);
-
-                        if position.x < 0.5 {
-                            // println!("P: {:?}", position);
-                            let new_x = position.x.max(0.0);
-                            grid_node.next_velocity.x = new_x;
-                            grid_node.next_velocity.y = 0.0;
-                            // let new_y = grid_node.next_velocity.y.max(0.0);
-                            // grid_node.next_velocity = Vector3::new(0.0, new_y, 0.0);
-                        }
+                    let position = grid_spacing * Vector3::new(i as f32, j as f32, k as f32);
+                    for co in &self.collision_objects {
+                        grid_node.next_velocity = co.collide(position, grid_node.next_velocity);
                     }
                 }
             }
@@ -329,27 +321,15 @@ impl AppState {
             // Update due to acceleration from gravity
             particle.velocity += Vector3::new(0.0, GRAVITY, 0.0) * DT;
 
-            if particle.velocity.dot(&Vector3::new(1.0, 0.0, 0.0)) <= 0.0 {
-                let position = particle.position;
-
-                if position.x < 0.5 {
-                    // println!("P: {:?}", position);
-                    // particle.velocity = Vector3::<f32>::zeros();
-                    let new_x = position.x.max(0.0);
-                    particle.velocity.x = new_x;
-                    particle.velocity.y = 0.0;
-                }
+            for co in &self.collision_objects {
+                particle.velocity = co.collide(particle.position, particle.velocity);
             }
         }
     }
 
     fn update_particle_positions(&mut self) {
         for particle in &mut self.particles {
-            if particle.position.x > 0.5 || particle.velocity.x > 3.0 {
-                println!("V: {:?}", particle.velocity);
-                particle.position += particle.velocity * DT;
-            }
-            println!("P: {:?}", particle.position);
+            particle.position += particle.velocity * DT;
         }
     }
 }
@@ -408,17 +388,27 @@ fn main() {
         p.scene_node = Some(c);
     }
 
-    let mut c = window.add_cube(15.0, 0.03, 15.0);
+    window.add_cube(15.0, 0.03, 15.0);
+
     let mut c = window.add_cube(0.01, 15.0, 15.0);
-    c.set_color(0.0, 0.0, 1.0);
+    c.set_color(0.0, 0.0, 0.5);
     // c.prepend_to_local_translation(&Translation3::new(7.5, 0.0, 7.5));
-    c.prepend_to_local_translation(&Translation3::new(0.5, 0.0, 0.0));
+    c.prepend_to_local_translation(&Translation3::new(1.5, 0.0, 0.0));
+
+    let mut collision_objects = Vec::new();
+    let collision_object = CollisionObject {
+        position: Vector3::new(1.5, 0.0, 0.0),
+        normal: Vector3::new(1.0, 0.0, 0.0),
+    };
+    collision_objects.push(collision_object);
+
     window.set_light(Light::StickToCamera);
 
     let state = AppState {
         grid_nodes,
         particles,
         volumes_calculated: false,
+        collision_objects,
     };
     window.render_loop(state);
 }
@@ -440,6 +430,27 @@ struct Particle {
     deformation_gradient_plastic: Matrix3<f32>,
     deformation_gradient_elastic: Matrix3<f32>,
     f_hat_ep: Matrix3<f32>,
+}
+
+struct CollisionObject {
+    // TODO: Velocity
+    position: Vector3<f32>,
+    normal: Vector3<f32>,
+}
+
+impl CollisionObject {
+    fn collide(&self, node_position: Vector3<f32>, node_velocity: Vector3<f32>) -> Vector3<f32> {
+        let node_next_position = node_position + node_velocity * DT;
+        let origin_to_next_pos = node_next_position - self.position;
+        // Check distance to the plane with dot product
+        let offset = (node_position - self.position).dot(&self.normal);
+        let offset_next = (origin_to_next_pos).dot(&self.normal);
+        if offset.abs() < 0.001 || offset * offset_next < 0.0 {
+            return Vector3::<f32>::zeros();
+        }
+
+        node_velocity
+    }
 }
 
 fn setup_grid(x: i32, y: i32, z: i32) -> Vec<Vec<Vec<GridNode>>> {
@@ -475,7 +486,7 @@ fn setup_particles(x: f32, y: f32, z: f32, num_particles_1d: u32) -> Vec<Particl
         let position = Vector3::new(offset_x, offset_y, 0.0) + center;
         let particle = Particle {
             position,
-            velocity: Vector3::new(-20.0, 0.0, 0.0),
+            velocity: Vector3::new(-10.0, 0.0, 0.0),
             mass: 1.0,
             scene_node: None,
             volume: 1.0,
