@@ -9,11 +9,11 @@ use na::Translation3;
 use na::Vector3;
 use rand::prelude::*;
 
-const DT: f32 = 0.005;
-const GRAVITY: f32 = -80.0;
+const DT: f32 = 0.003;
+const GRAVITY: f32 = -100.0;
 const grid_spacing: f32 = 0.1;
 const GRID_DIM: i32 = 100;
-const NUM_PARTICLES: u32 = 15;
+const NUM_PARTICLES: u32 = 20;
 
 // Parameters
 const E_0: f32 = 1.4e5;
@@ -469,10 +469,12 @@ impl CollisionObject {
             let v_n = node_velocity.dot(&outward_normal);
             let v_tangent = node_velocity - outward_normal * v_n;
             let v_tangent_length = v_tangent.norm();
-            if v_tangent_length <= -1.0 * v_n {
+
+            let mu = 1.0;
+            if v_tangent_length <= -mu * v_n {
                 return Vector3::<f32>::zeros();
             } else {
-                return (1.0 + -1.0 * v_n / v_tangent_length) * v_tangent;
+                return (1.0 + mu * v_n / v_tangent_length) * v_tangent;
             }
         }
 
@@ -510,10 +512,30 @@ fn setup_particles(x: f32, y: f32, z: f32, num_particles_1d: u32) -> Vec<Particl
     for _ in 0..num_particles_1d * num_particles_1d {
         let offset_x: f32 = rng.gen_range(-0.1, 0.1);
         let offset_y: f32 = rng.gen_range(-0.1, 0.1);
-        let position = Vector3::new(offset_x, offset_y, 0.0) + center;
+        let offset_z: f32 = rng.gen_range(-0.1, 0.1);
+        let position = Vector3::new(offset_x, offset_y, offset_z) + center;
         let particle = Particle {
             position,
-            velocity: Vector3::new(-15.0, 0.0, 0.0),
+            velocity: Vector3::new(20.0, 0.0, 0.0),
+            mass: 1.0,
+            scene_node: None,
+            volume: 1.0,
+            deformation_gradient_elastic: Matrix3::<f32>::identity(), // TODO: these really should be optional
+            deformation_gradient_plastic: Matrix3::<f32>::identity(),
+            f_hat_ep: Matrix3::<f32>::identity(),
+        };
+        particles.push(particle);
+    }
+
+    for _ in 0..num_particles_1d * num_particles_1d {
+        let offset_x: f32 = rng.gen_range(-0.1, 0.1);
+        let offset_y: f32 = rng.gen_range(-0.1, 0.1);
+        let offset_z: f32 = rng.gen_range(-0.1, 0.1);
+        let position =
+            Vector3::new(offset_x, offset_y, offset_z) + center + Vector3::new(1.0, 0.0, 0.0);
+        let particle = Particle {
+            position,
+            velocity: Vector3::new(-10.0, 0.0, 0.0),
             mass: 1.0,
             scene_node: None,
             volume: 1.0,
